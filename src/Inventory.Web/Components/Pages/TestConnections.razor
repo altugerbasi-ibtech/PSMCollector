@@ -1,0 +1,95 @@
+@page "/test-connections"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = "Reader")]
+@using global::Inventory.Web.Services
+@inject TestConnectionPoolService PoolService
+
+<PageTitle>TestConnections</PageTitle>
+
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+    <div>
+        <h1 class="mb-1">TestConnections</h1>
+        <p class="text-muted mb-0">mydb01.ae.local / IISEnvanter bağlantı havuzu testi</p>
+    </div>
+    <span class="badge fs-6 @(PoolService.IsRunning ? "text-bg-success" : "text-bg-secondary")">
+        Açık bağlantı: @PoolService.OpenConnectionCount / @TestConnectionPoolService.TargetConnectionCount
+    </span>
+    <span class="badge fs-6 @(PoolService.ActiveWorkloadCount > 0 ? "text-bg-warning" : "text-bg-secondary")">
+        Aktif test sorgusu: @PoolService.ActiveWorkloadCount / @TestConnectionPoolService.ActiveTestConnectionCount
+    </span>
+</div>
+
+<div class="d-flex gap-2 mb-4">
+    <button class="btn btn-primary" disabled="@busy" @onclick="StartAsync">50 Bağlantıyı Aç</button>
+    <button class="btn btn-warning" disabled="@busy" @onclick="StartActiveAsync">40 Bağlantıyı Aktif Yap</button>
+    <button class="btn btn-outline-warning" disabled="@busy" @onclick="StopActiveAsync">Aktif Sorguları Durdur</button>
+    <button class="btn btn-outline-danger" disabled="@busy" @onclick="StopAsync">Bağlantıları Kapat</button>
+    <button class="btn btn-outline-secondary" disabled="@busy" @onclick="LoadAsync">Verileri Yenile</button>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(errorMessage))
+{
+    <div class="alert alert-danger">@errorMessage</div>
+}
+
+<div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between">
+        <span class="fw-semibold">dbo.IisInventoryRun</span>
+        <span class="text-muted">Son @rows.Count kayıt</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover table-sm align-middle mb-0">
+            <thead class="table-light">
+                <tr><th>RunId</th><th>IIS Server</th><th>Başlangıç</th><th>Bitiş</th><th>Versiyon</th><th>Durum</th><th>Hata</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var row in rows)
+                {
+                    <tr>
+                        <td class="font-monospace small">@row.RunId</td>
+                        <td>@row.IisServer</td>
+                        <td>@row.StartedAt.ToString("dd.MM.yyyy HH:mm:ss")</td>
+                        <td>@row.CompletedAt.ToString("dd.MM.yyyy HH:mm:ss")</td>
+                        <td>@row.CollectorVersion</td>
+                        <td>@row.RunStatus</td>
+                        <td class="text-danger">@row.ErrorMessage</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@code {
+    [Parameter, SupplyParameterFromQuery(Name = "activate")]
+    public bool Activate { get; set; }
+
+    private IReadOnlyList<IisInventoryRunRow> rows = [];
+    private bool busy;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await StartAsync();
+        if (Activate) await StartActiveAsync();
+    }
+
+    private async Task StartAsync() => await ExecuteAsync(async () =>
+    {
+        await PoolService.StartAsync();
+        rows = await PoolService.ReadRunsAsync();
+    });
+
+    private async Task StopAsync() => await ExecuteAsync(PoolService.StopAsync);
+    private async Task StartActiveAsync() => await ExecuteAsync(() => PoolService.StartActiveWorkloadAsync());
+    private async Task StopActiveAsync() => await ExecuteAsync(PoolService.StopActiveWorkloadAsync);
+    private async Task LoadAsync() => await ExecuteAsync(async () => rows = await PoolService.ReadRunsAsync());
+
+    private async Task ExecuteAsync(Func<Task> action)
+    {
+        busy = true; errorMessage = null;
+        try { await action(); }
+        catch (Exception ex) { errorMessage = ex.Message; }
+        finally { busy = false; }
+    }
+}

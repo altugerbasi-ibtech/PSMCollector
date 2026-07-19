@@ -1,0 +1,26 @@
+@page "/iis-servers"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = "Reader")]
+@inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthenticationState
+
+<PageTitle>IIS Sunucuları</PageTitle><h1>IIS Sunucuları</h1>
+<AuthorizeView Policy="Admin" Context="adminContext"><Authorized>
+<EditForm Model="model" OnValidSubmit="SaveAsync" class="row g-2 mb-4"><DataAnnotationsValidator />
+    <div class="col"><InputText class="form-control" @bind-Value="model.ServerName" placeholder="Sunucu adı" /></div>
+    <div class="col"><InputText class="form-control" @bind-Value="model.Fqdn" placeholder="FQDN" /></div>
+    <div class="col"><InputNumber class="form-control" @bind-Value="model.CollectionIntervalSeconds" /></div>
+    <div class="col-auto"><button class="btn btn-primary">Ekle</button></div>
+</EditForm></Authorized></AuthorizeView>
+<table class="table table-striped"><thead><tr><th>Sunucu</th><th>FQDN</th><th>Durum</th><th>Son başarı</th><th>Son hata</th><th></th></tr></thead><tbody>
+@foreach (var item in servers) { <tr><td>@item.ServerName</td><td>@item.Fqdn</td><td>@(item.IsEnabled ? "Etkin" : "Pasif")</td><td>@item.LastSuccessfulCollectionUtc</td><td>@item.LastErrorMessage</td><td><AuthorizeView Policy="Admin"><button class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleAsync(item)">@(item.IsEnabled ? "Devre dışı" : "Etkinleştir")</button></AuthorizeView></td></tr> }
+</tbody></table>
+@code {
+    private List<IisServer> servers = [];
+    private IisServer model = NewModel();
+    protected override Task OnInitializedAsync() => LoadAsync();
+    private async Task LoadAsync() { using var scope = ScopeFactory.CreateScope(); servers = await scope.ServiceProvider.GetRequiredService<InventoryDbContext>().IisServers.AsNoTracking().OrderBy(x => x.ServerName).ToListAsync(); }
+    private async Task SaveAsync() { var user = (await AuthenticationState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "unknown"; using var scope = ScopeFactory.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>(); model.CreatedBy = model.UpdatedBy = user; model.CreatedAtUtc = model.UpdatedAtUtc = DateTime.UtcNow; db.IisServers.Add(model); await db.SaveChangesAsync(); model = NewModel(); await LoadAsync(); }
+    private async Task ToggleAsync(IisServer item) { using var scope = ScopeFactory.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>(); var entity = await db.IisServers.FindAsync(item.Id); if (entity is null) return; entity.IsEnabled = !entity.IsEnabled; entity.UpdatedAtUtc = DateTime.UtcNow; await db.SaveChangesAsync(); await LoadAsync(); }
+    private static IisServer NewModel() => new() { ServerName = "", Fqdn = "", CreatedBy = "", UpdatedBy = "" };
+}

@@ -1,0 +1,6 @@
+@page "/inventory"
+@attribute [Authorize(Policy = "Reader")]
+@inject IServiceScopeFactory ScopeFactory
+<PageTitle>Bağlantı Envanteri</PageTitle><h1>Bağlantı Envanteri</h1>
+<table class="table table-striped"><thead><tr><th>Zaman</th><th>IIS</th><th>AppPool</th><th>SQL</th><th>Database</th><th>Toplam</th><th>Aktif</th><th>Idle</th><th>PID</th></tr></thead><tbody>@foreach(var item in rows){<tr><td>@item.InventoryDateUtc</td><td>@item.IisServerName</td><td>@item.AppPoolName</td><td>@item.SqlServerName</td><td>@item.DatabaseName</td><td>@item.TotalConnections</td><td>@item.ActiveConnections</td><td>@item.IdlePooledConnections</td><td>@item.WorkerProcessIds</td></tr>}</tbody></table>
+@code { private List<ConnectionInventory> rows=[]; protected override async Task OnInitializedAsync(){using var scope=ScopeFactory.CreateScope();var db=scope.ServiceProvider.GetRequiredService<InventoryDbContext>();var id=await db.CollectionRuns.Where(x=>x.Status==CollectionRunStatus.Completed).OrderByDescending(x=>x.CompletedAtUtc).Select(x=>(Guid?)x.Id).FirstOrDefaultAsync();if(id.HasValue)rows=await db.ConnectionInventory.AsNoTracking().Where(x=>x.CollectionId==id).OrderBy(x=>x.IisServerName).ThenBy(x=>x.AppPoolName).Take(500).ToListAsync();} }
