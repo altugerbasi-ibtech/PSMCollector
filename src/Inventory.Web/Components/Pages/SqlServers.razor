@@ -1,0 +1,18 @@
+@page "/sql-servers"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = "Reader")]
+@inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthenticationState
+
+<PageTitle>SQL Sunucuları</PageTitle><h1>SQL Sunucuları</h1>
+<AuthorizeView Policy="Admin" Context="adminContext"><Authorized><EditForm Model="model" OnValidSubmit="SaveAsync" class="row g-2 mb-4"><DataAnnotationsValidator />
+<div class="col"><InputText class="form-control" @bind-Value="model.ServerName" placeholder="Sunucu adı" /></div><div class="col"><InputText class="form-control" @bind-Value="model.Fqdn" placeholder="FQDN" /></div><div class="col"><InputText class="form-control" @bind-Value="model.IpAddress" placeholder="IP adresi" /></div><div class="col-auto"><button class="btn btn-primary">Ekle</button></div></EditForm></Authorized></AuthorizeView>
+<table class="table table-striped"><thead><tr><th>Sunucu</th><th>FQDN</th><th>Endpoint</th><th>Durum</th><th>Son hata</th><th></th></tr></thead><tbody>@foreach(var item in servers){<tr><td>@item.ServerName</td><td>@item.Fqdn</td><td>@item.IpAddress:@item.Port</td><td>@(item.IsEnabled ? "Etkin" : "Pasif")</td><td>@item.LastErrorMessage</td><td><AuthorizeView Policy="Admin"><button class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleAsync(item)">Değiştir</button></AuthorizeView></td></tr>}</tbody></table>
+<h2 class="h4">Eşleme bekleyen endpointler</h2><table class="table"><thead><tr><th>IP</th><th>Port</th><th>İlk/Son görülme</th><th>Gözlem</th></tr></thead><tbody>@foreach(var item in unknown){<tr><td>@item.IpAddress</td><td>@item.Port</td><td>@item.FirstSeenUtc / @item.LastSeenUtc</td><td>@item.ObservationCount</td></tr>}</tbody></table>
+@code {
+ private List<SqlServer> servers=[]; private List<UnknownSqlEndpoint> unknown=[]; private SqlServer model=NewModel(); protected override Task OnInitializedAsync()=>LoadAsync();
+ private async Task LoadAsync(){using var scope=ScopeFactory.CreateScope();var db=scope.ServiceProvider.GetRequiredService<InventoryDbContext>();servers=await db.SqlServers.AsNoTracking().OrderBy(x=>x.ServerName).ToListAsync();unknown=await db.UnknownSqlEndpoints.AsNoTracking().OrderByDescending(x=>x.LastSeenUtc).ToListAsync();}
+ private async Task SaveAsync(){var user=(await AuthenticationState.GetAuthenticationStateAsync()).User.Identity?.Name??"unknown";using var scope=ScopeFactory.CreateScope();var db=scope.ServiceProvider.GetRequiredService<InventoryDbContext>();model.CreatedBy=model.UpdatedBy=user;model.CreatedAtUtc=model.UpdatedAtUtc=DateTime.UtcNow;db.SqlServers.Add(model);await db.SaveChangesAsync();model=NewModel();await LoadAsync();}
+ private async Task ToggleAsync(SqlServer item){using var scope=ScopeFactory.CreateScope();var db=scope.ServiceProvider.GetRequiredService<InventoryDbContext>();var entity=await db.SqlServers.FindAsync(item.Id);if(entity is null)return;entity.IsEnabled=!entity.IsEnabled;entity.UpdatedAtUtc=DateTime.UtcNow;await db.SaveChangesAsync();await LoadAsync();}
+ private static SqlServer NewModel()=>new(){ServerName="",Fqdn="",IpAddress="",CreatedBy="",UpdatedBy=""};
+}

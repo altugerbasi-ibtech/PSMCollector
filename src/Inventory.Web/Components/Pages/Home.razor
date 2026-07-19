@@ -1,0 +1,122 @@
+@page "/"
+@attribute [Authorize(Policy = "Reader")]
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>PSMCollector Envanter Özeti</PageTitle>
+
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+    <div>
+        <h1 class="mb-1">Bağlantı Envanteri</h1>
+        <p class="text-muted mb-0">Son tamamlanan collection içindeki IIS–Application Pool–Database bağlantıları</p>
+    </div>
+    <div class="text-md-end">
+        <div class="small text-muted">Son başarılı collection</div>
+        <div class="fw-semibold">@(lastSuccess?.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss") ?? "Henüz yok")</div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <Card Title="Bağlantısı Olan App Pool" Value="@appPoolCount" />
+    <Card Title="Toplam Bağlantı" Value="@total" />
+    <Card Title="Aktif" Value="@active" />
+    <Card Title="Pasif / Pooled" Value="@idle" />
+</div>
+
+@if (rows.Count == 0)
+{
+    <div class="alert alert-info" role="status">
+        Son collection içinde database bağlantısı bulunan bir Application Pool yok.
+    </div>
+}
+else
+{
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>IIS Sunucusu</th>
+                        <th>Application Pool</th>
+                        <th>Database Server</th>
+                        <th>Database</th>
+                        <th class="text-end">Toplam</th>
+                        <th class="text-end">Aktif</th>
+                        <th class="text-end">Pasif</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in rows)
+                    {
+                        <tr>
+                            <td class="fw-semibold">@item.IisServerName</td>
+                            <td>@item.AppPoolName</td>
+                            <td>@item.SqlServerName</td>
+                            <td>@item.DatabaseName</td>
+                            <td class="text-end fw-semibold">@item.TotalConnections</td>
+                            <td class="text-end text-success fw-semibold">@item.ActiveConnections</td>
+                            <td class="text-end text-secondary fw-semibold">@item.IdlePooledConnections</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DashboardRow> rows = [];
+    private int appPoolCount;
+    private int total;
+    private int active;
+    private int idle;
+    private DateTime? lastSuccess;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var last = await db.ConnectionInventory.AsNoTracking()
+            .Where(x => x.TotalConnections > 0)
+            .OrderByDescending(x => x.InventoryDateUtc)
+            .Select(x => new { x.CollectionId, CompletedAtUtc = (DateTime?)x.InventoryDateUtc })
+            .FirstOrDefaultAsync();
+
+        lastSuccess = last?.CompletedAtUtc;
+        if (last is null)
+            return;
+
+        rows = await db.ConnectionInventory.AsNoTracking()
+            .Where(x => x.CollectionId == last.CollectionId && x.TotalConnections > 0)
+            .OrderBy(x => x.IisServerName)
+            .ThenBy(x => x.AppPoolName)
+            .ThenBy(x => x.SqlServerName)
+            .ThenBy(x => x.DatabaseName)
+            .Select(x => new DashboardRow
+            {
+                IisServerName = x.IisServerName,
+                AppPoolName = x.AppPoolName,
+                SqlServerName = x.SqlServerName,
+                DatabaseName = x.DatabaseName,
+                TotalConnections = x.TotalConnections,
+                ActiveConnections = x.ActiveConnections,
+                IdlePooledConnections = x.IdlePooledConnections
+            })
+            .ToListAsync();
+
+        appPoolCount = rows.Select(x => (x.IisServerName, x.AppPoolName)).Distinct().Count();
+        total = rows.Sum(x => x.TotalConnections);
+        active = rows.Sum(x => x.ActiveConnections);
+        idle = rows.Sum(x => x.IdlePooledConnections);
+    }
+
+    private sealed class DashboardRow
+    {
+        public required string IisServerName { get; init; }
+        public required string AppPoolName { get; init; }
+        public required string SqlServerName { get; init; }
+        public required string DatabaseName { get; init; }
+        public int TotalConnections { get; init; }
+        public int ActiveConnections { get; init; }
+        public int IdlePooledConnections { get; init; }
+    }
+}
